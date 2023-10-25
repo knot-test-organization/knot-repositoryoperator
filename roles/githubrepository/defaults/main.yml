@@ -1,0 +1,7 @@
+---
+# defaults file for GithubRepository
+repo_name: "test-operator"
+decription: "This is a test created by an operator"
+private: true
+type: webapi
+language: netcore

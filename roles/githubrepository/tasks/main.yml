@@ -1,0 +1,309 @@
+---
+- name: set username variable
+  set_fact:
+    username: "{{ lookup('env','GITHUB_USERNAME') }}"
+
+- name: set PAT variable
+  set_fact:
+    PAT: "{{ lookup('env','PAT') }}"
+  ignore_errors: true
+
+# check if repository exists on GitHub
+- name: Check if repository exists on GitHub
+  uri:
+    url: "https://api.github.com/repos/{{ organization_name }}/{{ repo_name }}"
+    headers:
+      Authorization: "token {{ PAT }}"
+    method: GET
+    status_code: [200, 404]
+  register: repo_exists
+
+# - name: Debug with a message
+#   debug:
+#     msg: "The value of repo_exists is {{ repo_exists.status }} and the value of repo_name is {{ repo_name }}"
+
+# - name: Debug with a message
+#   debug:
+#     msg: "{{ automation_tool }}"
+
+# - name: Introduce a delay
+#   pause:
+#     seconds: 60
+
+
+# tasks file for GithubRepository
+- name: Create repository
+  uri:
+    url: "https://api.github.com/repos/{{ organization_name }}/knot-{{ repo_type }}-template/generate"
+    user: "{{ username }}"
+    password: "{{ PAT }}"
+    method: POST
+    follow_redirects: all
+    force_basic_auth: true
+    body_format: json
+    body:
+      owner: "{{ organization_name }}"
+      name: "{{ repo_name }}"
+      description: "{{ description }}"
+      private: "{{ is_private }}"
+      include_all_branches: true
+  register: repository_created_result
+  changed_when: repository_created_result.status == 201
+  when: repo_type not in ["dedalowangular", "dedalowjavamonolithic", "dedalowliquibase", "java-restclient"]
+  ignore_errors: true
+
+# create the  helm repositories
+# - name: Create repository helm 
+#   uri:
+#     url: "https://api.github.com/orgs/{{ organization_name }}/repos"
+#     user: "{{ username }}"
+#     password: "{{ PAT }}"
+#     method: POST
+#     follow_redirects: all
+#     force_basic_auth: true
+#     body_format: json
+#     body:
+#       name: "{{ repo_name }}"
+#       description: "{{ description }}"
+#       private: "{{ is_private }}"
+#     status_code: 201
+#   when: repo_type == "helm"
+#   ignore_errors: true
+
+
+# create the  empty repositories for dedalow
+- name: Create empty repository for dedalow
+  uri:
+    url: "https://api.github.com/orgs/{{ organization_name }}/repos"
+    user: "{{ username }}"
+    password: "{{ PAT }}"
+    method: POST
+    follow_redirects: all
+    force_basic_auth: true
+    body_format: json
+    body:
+      name: "{{ repo_name }}"
+      description: "{{ description }}"
+      private: "{{ is_private }}"
+      auto_init: true
+    status_code: 201
+  when: repo_type in ["dedalowangular", "dedalowjavamonolithic", "dedalowliquibase"]
+  ignore_errors: true
+
+
+# create the REST client repository 
+- name: Create REST client repository 
+  uri:
+    url: "https://api.github.com/orgs/{{ organization_name }}/repos"
+    user: "{{ username }}"
+    password: "{{ PAT }}"
+    method: POST
+    follow_redirects: all
+    force_basic_auth: true
+    body_format: json
+    body:
+      name: "{{ repo_name }}"
+      description: "{{ description }}"
+      private: "{{ is_private }}"
+    status_code: 201
+  when: repo_type == "java-restclient" and repo_exists.status == 404  
+  ignore_errors: true  
+
+
+# create an empty folder
+- name: Create a folder repos
+  file:
+    path: /home/ansible/repos
+    state: directory
+  become: yes
+  become_user: root
+
+# download the OpenAPI cli
+- name: Download OpenAPI Generator CLI
+  get_url:
+    url: https://repo1.maven.org/maven2/org/openapitools/openapi-generator-cli/6.6.0/openapi-generator-cli-6.6.0.jar
+    dest: /home/ansible/repos
+  ignore_errors: true
+  when: repo_type == "java-restclient" and repo_exists.status == 404 
+
+# clone knot-onboarding-resources repository
+- name: Clone knot-onboarding-resources repository
+  git:
+    repo: 'https://{{ username }}:{{ PAT }}@github.com/NTTData-HybridCloud/knot-onboarding-resources.git'
+    dest: '/home/ansible/repos/knot-onboarding-resources'
+  ignore_errors: true
+  when: repo_type == "java-restclient"  and repo_exists.status == 404 
+  
+
+# download the openapi yaml file
+- name: Download openapi.yml file
+  copy:
+    src: '/home/ansible/repos/knot-onboarding-resources/products/{{ repo_name }}/openapi.yaml'
+    dest: '/home/ansible/repos'
+  ignore_errors: true  
+  when: repo_type == "java-restclient" and repo_exists.status == 404 
+
+# generate the REST client project
+- name: Generate OpenAPI REST client
+  command: java -jar /home/ansible/repos/openapi-generator-cli-6.6.0.jar generate -i /home/ansible/repos/openapi.yaml  -g "java" --additional-properties useMaven=true,artifactId={{ repo_name }}-client,artifactDescription={{ description }} -o /home/ansible/repos/{{ repo_name }}-template 
+  ignore_errors: true
+  when: repo_type == "java-restclient" and repo_exists.status == 404
+
+# Add distributionManagement section to pom.xml
+- name: Add distributionManagement section to pom.xml
+  lineinfile:
+    path: /home/ansible/repos/{{ repo_name }}-template/pom.xml
+    insertbefore: '</project>'
+    line: |
+      <distributionManagement>
+        <repository>
+          <id>github</id>
+          <name>GitHub OWNER Apache Maven Packages</name>
+          <url>https://maven.pkg.github.com/{{ organization_name }}/{{ repo_name }}</url>
+        </repository>
+      </distributionManagement>
+  when: repo_type == "java-restclient" and repo_exists.status == 404
+  ignore_errors: true
+
+ # create a variable in template with deploy step
+- name: Create a variable with the step to deploy the artifact
+  set_fact:
+    indented_lines: "{{ lookup('template', 'maven_workflow_template.yml.j2') }}"
+  when: repo_type == "java-restclient" and repo_exists.status == 404
+  ignore_errors: true
+
+ # Add step to publish to GitHub Packages Apache Maven
+- name: Add step to publish to GitHub Packages Apache Maven
+  lineinfile:
+    path: /home/ansible/repos/{{ repo_name }}-template/.github/workflows/maven.yml
+    insertafter: 'run: mvn -B package --no-transfer-progress --file pom.xml'
+    line: "{{ indented_lines }}"
+  when: repo_type == "java-restclient" and repo_exists.status == 404
+  ignore_errors: true
+
+# Delete .github file
+- name: Delete .github file
+  file:
+    path: /home/ansible/repos/{{ repo_name }}-template/.github
+    state: absent
+  when: automation_tool == "Tekton"
+  ignore_errors: true
+
+
+# clone template repository
+- name: Clone template repository
+  git:
+    repo: 'https://{{ username }}:{{ PAT }}@github.com/NTTData-HybridCloud/{{ repo_name }}.git'
+    dest: '/home/ansible/repos/{{ repo_name }}'
+  ignore_errors: yes
+  when: repo_type == "java-restclient" and repo_exists.status == 404
+
+# copy the generated content into the new repository
+- name: Copy the generated content
+  copy:
+    src: '/home/ansible/repos/{{ repo_name }}-template/'
+    dest: '/home/ansible/repos/{{ repo_name }}'
+  ignore_errors: yes  
+  when: repo_type == "java-restclient" and repo_exists.status == 404
+
+# Add files to repository
+- name: Add all files to the repository
+  command: git add .
+  args:
+    chdir: "/home/ansible/repos/{{ repo_name }}"
+  ignore_errors: yes  
+  when: repo_type == "java-restclient" and repo_exists.status == 404
+
+- name: Configure git user name
+  command: git config --global user.name "github-actions[bot]"
+  ignore_errors: yes
+  when: repo_type == "java-restclient" and repo_exists.status == 404
+
+- name: Configure git user email
+  command: git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+  ignore_errors: yes
+  when: repo_type == "java-restclient" and repo_exists.status == 404
+
+# Commit changes
+- name: Commit changes
+  command: git commit -m "Initial commit"
+  args:
+    chdir: "/home/ansible/repos/{{ repo_name }}"
+  ignore_errors: yes
+  when: repo_type == "java-restclient" and repo_exists.status == 404
+
+
+# Push change to reposity     
+- name: Push changes to the repository
+  command: git push origin main
+  args:
+    chdir: "/home/ansible/repos/{{ repo_name }}"
+  ignore_errors: yes    
+  when: repo_type == "java-restclient" and repo_exists.status == 404
+
+# Initialize git flow if git_branching equals to 'gitflow'
+- name: Include gitflow_init.yml tasks
+  include_tasks: gitflow_init.yml
+  ignore_errors: yes
+  when: git_branching == "gitflow" and repo_exists.status == 404
+
+
+
+# - name: Clone the repository template
+#   command: git clone https://{{ username }}:{{ PAT }}@github.com/{{ organization_name }}/knot-{{ repo_type }}-template.git
+#   ignore_errors: yes
+
+# - name: Find the files in the template
+#   find:
+#     pattern: "*.*"
+#     path: "/knot-{{ repo_type }}-template"
+#   register: template_files
+#   ignore_errors: yes
+
+# - name: Replace the variables in the template
+#   replace:
+#     dest: '{{ item.0.path }}'
+#     regexp: '{{ item.1.regexp }}'
+#     replace: '{{ item.1.line }}'
+#     backup: yes
+#   with_nested:
+#     - "{{ template_files.files }}"
+#     - "{{ text_to_replace }}"
+#   ignore_errors: yes  
+
+# create a task  so that when repo_type == "java-restclient" return the path of openapi in that repo as a string
+# and when its springboot-restservice return the other path 
+
+# look if openapi exists in onboarding.../products/appName/ and if so copy that openapi into the template
+    # clone onboarding templates and the new template then copy openapi from onboarding templates into the project
+    # create a task  so that when repo_type == "java-restclient" return the path of openapi in that repo as a string
+       # and when its springboot-restservice return the other path
+    # - name: Check if openapi.yaml exists
+    #   stat:
+    #     path: /path/to/your/folder/openapi.yaml
+    #   register: file_info
+    # file_info.stat.exists is a boolean that returns true or false
+
+# if not then create a task to copy the openapi.yml located in project template  into the roject folder in onboarding templates
+
+# - name: Clone the repository template
+#   command: git clone https://{{ username }}:{{ PAT }}@github.com/{{ organization_name }}/knot-{{ repo_type }}-template.git
+#   ignore_errors: yes
+
+# - name: Find the files in the template
+#   find:
+#     pattern: "*.*"
+#     path: "/knot-{{ repo_type }}-template"
+#   register: template_files
+#   ignore_errors: yes
+
+# - name: Replace the variables in the template
+#   replace:
+#     dest: '{{ item.0.path }}'
+#     regexp: '{{ item.1.regexp }}'
+#     replace: '{{ item.1.line }}'
+#     backup: yes
+#   with_nested:
+#     - "{{ template_files.files }}"
+#     - "{{ text_to_replace }}"
+#   ignore_errors: yes  

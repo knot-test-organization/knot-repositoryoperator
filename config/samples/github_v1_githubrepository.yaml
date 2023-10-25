@@ -1,0 +1,10 @@
+apiVersion: github.repository.nttdata.com/v1
+kind: GithubRepository
+metadata:
+  name: githubrepository-sample
+spec:
+  # Add fields here
+  repo_name: "test-operatordos"
+  description: "This is a test created by an operator"
+  is_private: true
+  organization_name: "everis-technology"

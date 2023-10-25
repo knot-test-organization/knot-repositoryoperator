@@ -1,0 +1,30 @@
+- name: set username variable
+  set_fact:
+    username: "{{ lookup('env','GITHUB_USERNAME') }}"
+
+- name: set PAT variable
+  set_fact:
+    PAT: "{{ lookup('env','PAT') }}"
+    
+# - name: delete github repository
+#   uri:
+#     url: "https://api.github.com/repos/{{ organization_name }}/{{ repo_name }}/"
+#     user: "{{ username }}"
+#     password: "{{ PAT }}"
+#     method: DELETE
+#     follow_redirects: all
+#     force_basic_auth: true
+#     body_format: json
+#     headers:
+#       Authorization: "token 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"
+#   register: repository_created_result
+#   changed_when: repository_created_result.status == 204
+#   ignore_errors: true
+
+- name: Delete Github repository
+  shell: "curl -u {{ username }}@everis.com:{{ PAT }} -X DELETE https://api.github.com/repos/{{ organization_name }}/{{ repo_name }}"
+  ignore_errors: true
+
+# - name: debug
+#   debug:
+#     msg: "repository_created_result: {{ repository_created_result }}"

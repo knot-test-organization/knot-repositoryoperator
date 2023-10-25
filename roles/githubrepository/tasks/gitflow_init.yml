@@ -1,0 +1,85 @@
+---
+
+# set the variables 
+- name: set username variable
+  set_fact:
+    username: "{{ lookup('env','GITHUB_USERNAME') }}"
+  ignore_errors: yes  
+
+- name: set PAT variable
+  set_fact:
+    PAT: "{{ lookup('env','PAT') }}"
+  ignore_errors: true
+
+
+# clone template repository
+- name: Clone template repository
+  git:
+    repo: 'https://{{ username }}:{{ PAT }}@github.com/NTTData-HybridCloud/{{ repo_name }}.git'
+    dest: '/home/ansible/repos/{{ repo_name }}'
+  ignore_errors: yes
+
+
+
+# Install git-flow
+- name: Install Git Flow in one command
+  shell: |
+    git clone https://github.com/nvie/gitflow.git /home/ansible/gitflow && \
+    cd /home/ansible/gitflow && \
+    git submodule init && \
+    git config submodule.shFlags.url https://github.com/nvie/shFlags.git && \
+    git submodule update && \
+    make install
+  become: yes
+  ignore_errors: yes
+
+
+- name: Initialize git flow
+  command: git flow init -d
+  args:
+    chdir: '/home/ansible/repos/{{ repo_name }}'
+  ignore_errors: yes    
+
+# - name: Add a comment to the README
+#   shell: |
+#     if [ -f README.md ]; then
+#       echo -e "\n\nThis is a new component" >> README.md
+#     else
+#       echo -e "# New README\n\nThis is a new component" > README.md
+#     fi
+#   args:
+#     chdir: "/home/ansible/repos/{{ repo_name }}"
+#   ignore_errors: yes
+
+
+#   # Add files to repository
+# - name: Add all files to the repository
+#   command: git add .
+#   args:
+#     chdir: "/home/ansible/repos/{{ repo_name }}"
+#   ignore_errors: yes  
+
+
+- name: Configure git user name
+  command: git config --global user.name "github-actions[bot]"
+  ignore_errors: yes
+
+
+- name: Configure git user email
+  command: git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+  ignore_errors: yes
+
+# Commit changes
+- name: Commit changes
+  command: git commit -m "Applied git flow"
+  args:
+    chdir: "/home/ansible/repos/{{ repo_name }}"
+  ignore_errors: yes
+
+
+# Push change to reposity     
+- name: Push changes to the repository
+  command: git push origin develop
+  args:
+    chdir: "/home/ansible/repos/{{ repo_name }}"
+  ignore_errors: yes    
